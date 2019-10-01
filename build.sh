@@ -105,6 +105,9 @@ export LC_ALL
 # Select build tools (prefer 'g' variants if available)
 command which gmake &>/dev/null && export make_bin='gmake' || export make_bin='make'
 command which glibtoolize &>/dev/null && libtoolize_bin='glibtoolize' || libtoolize_bin='libtoolize'
+command which gpatch &>/dev/null && export patch_bin='gpatch' || export patch_bin='patch'
+command which gmd5sum &>/dev/null && export md5sum_bin='gmd5sum' || export md5sum_bin='md5sum'
+command which g++7 &>/dev/null && export gpp_bin='g++7' || export gpp_bin='g++'
 
 
 # Debian-like deps, see below for other distros
@@ -143,8 +146,8 @@ gcc_type='none'
 
 if command which dpkg-architecture &>/dev/null && dpkg-architecture -earmhf; then
     gcc_type='raspbian'
-elif command which gcc &>/dev/null; then
-    gcc_type="$(gcc --version | head -n1 | tr -s '()' ' ' | cut -f2 -d' ')"
+elif command which $gpp_bin &>/dev/null; then
+    gcc_type="$($gpp_bin --version | head -n1 | tr -s '()' ' ' | cut -f2 -d' ')"
 fi
 
 # gcc optimization
@@ -159,6 +162,11 @@ case "$gcc_type" in
             optimize_build='yes'
         fi
         ;;
+    FreeBSD)
+	export cfg_opts_lt="$cfg_opts_lt --disable-dependency-tracking --with-kqueue"
+	export cfg_opts_rt="$cfg_opts_rt --disable-dependency-tracking"
+        [[ "$optimize_build" = 'yes' ]] && export CFLAGS="-march=native -pipe -O2 -fomit-frame-pointer${CFLAGS:+ }${CFLAGS}"
+	;;
     *)
         [[ "$optimize_build" = 'yes' ]] && export CFLAGS="-march=native -pipe -O2 -fomit-frame-pointer${CFLAGS:+ }${CFLAGS}"
         ;;
@@ -236,12 +244,12 @@ sub_dirs="c-ares-*[0-9] curl-*[0-9] xmlrpc-c-$xmlrpc_tree-$xmlrpc_rev libtorrent
 
 
 # Command dependency
-build_cmd_deps=('coreutils:md5sum')
+build_cmd_deps=("coreutils:$md5sum_bin")
 build_cmd_deps+=('curl:curl')
 build_cmd_deps+=('subversion:svn')
 build_cmd_deps+=("build-essential:$make_bin")
-build_cmd_deps+=('build-essential:g++')
-build_cmd_deps+=('patch:patch')
+build_cmd_deps+=("build-essential:$gpp_bin")
+build_cmd_deps+=("patch:$patch_bin")
 build_cmd_deps+=("libtool:$libtoolize_bin")
 build_cmd_deps+=('automake:aclocal')
 build_cmd_deps+=('autoconf:autoconf')
@@ -344,7 +352,7 @@ check_hash() { # [package-version.tar.gz] : md5 hashcheck downloaded packages
         hash="${srchash##*:}"
 
         if [ "$1" == "$pkg" ]; then
-            echo "$hash  $tarballs_dir/$pkg" | md5sum -c --status &>/dev/null && break
+            echo "$hash  $tarballs_dir/$pkg" | $md5sum_bin -c --status &>/dev/null && break
             rm -f "$tarballs_dir/$pkg" && fail "Checksum failed for $pkg"
         fi
     done
@@ -463,7 +471,7 @@ build_lt() { # Build libTorrent
     bold '~~~~~~~~~~~~~~~~~~~~~~~~   Building libTorrent   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~'
     ( set +x ; cd "libtorrent-$lt_version" \
         && ./autogen.sh \
-        && ./configure --prefix="$build_dir" $cfg_opts $cfg_opts_lt \
+        && if [[ "$gcc_type" == "FreeBSD" ]]; then export OPENSSL_CFLAGS="-I /usr/include" ; export OPENSSL_LIBS="-L/usr/lib -lcrypto" ; fi ; ./configure --prefix="$build_dir" $cfg_opts $cfg_opts_lt \
         && $make_bin $make_opts \
         && $make_bin install \
         || fail "during building 'libtorrent'!" )
@@ -477,9 +485,11 @@ build_rt() { # Build rTorrent
     [[ -d "$tarballs_dir" && -f "$tarballs_dir/DONE-rtorrent-chrpath" ]] && rm -f "$tarballs_dir/DONE-rtorrent-chrpath" >/dev/null
 
     bold '~~~~~~~~~~~~~~~~~~~~~~~~   Building rTorrent   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~'
+    if [[ "$gcc_type" == "FreeBSD" ]]; then export LDFLAGS="$LDFLAGS -lexecinfo -pthread" ; fi
     ( set +x ; cd "rtorrent-$rt_version" \
         && ./autogen.sh \
         && ./configure --prefix="$build_dir" $cfg_opts $cfg_opts_rt --with-ncursesw --with-xmlrpc-c="$build_dir/bin/xmlrpc-c-config" \
+	&& if [[ "$gcc_type" == "FreeBSD" ]]; then ( cd gnulib && $make_bin $make_opts ) ; fi \
         && $make_bin $make_opts \
         && $make_bin install \
         || fail "during building 'rtorrent'!" )
@@ -523,7 +533,7 @@ patch_lt_vanilla() { # Patch vanilla libTorrent
     pushd "libtorrent-$lt_version"
 
     for vanilla in "$src_dir/patches"/vanilla_lt_{*"${lt_version%-svn}"*,all}_*.patch; do
-        [[ ! -e "$vanilla" ]] || { bold "$(basename "$vanilla")"; patch -uNp1 -i "$vanilla"; }
+        [[ ! -e "$vanilla" ]] || { bold "$(basename "$vanilla")"; $patch_bin -uNp1 -i "$vanilla"; }
     done
 
     popd
@@ -539,7 +549,7 @@ patch_rt_vanilla() { # Patch vanilla rTorrent
     pushd "rtorrent-$rt_version"
 
     for vanilla in "$src_dir/patches"/vanilla_rt_{*"${rt_version%-svn}"*,all}_*.patch; do
-        [[ ! -e "$vanilla" ]] || { bold "$(basename "$vanilla")"; patch -uNp1 -i "$vanilla"; }
+        [[ ! -e "$vanilla" ]] || { bold "$(basename "$vanilla")"; $patch_bin -uNp1 -i "$vanilla"; }
     done
 
     popd
@@ -557,11 +567,11 @@ patch_lt() { # Patch libTorrent
     pushd "libtorrent-$lt_version"
 
     for corepatch in "$src_dir/patches"/lt-ps_{*"${lt_version%-svn}"*,all}_*.patch; do
-        [[ ! -e "$corepatch" ]] || { bold "$(basename "$corepatch")"; patch -uNp1 -i "$corepatch"; }
+        [[ ! -e "$corepatch" ]] || { bold "$(basename "$corepatch")"; $patch_bin -uNp1 -i "$corepatch"; }
     done
 
     for backport in "$src_dir/patches"/{backport,misc}_lt_{*"${lt_version%-svn}"*,all}_*.patch; do
-        [[ ! -e "$backport" ]] || { bold "$(basename "$backport")"; patch -uNp1 -i "$backport"; }
+        [[ ! -e "$backport" ]] || { bold "$(basename "$backport")"; $patch_bin -uNp1 -i "$backport"; }
     done
 
     popd
@@ -579,15 +589,15 @@ patch_rt() { # Patch rTorrent
     pushd "rtorrent-$rt_version"
 
     for corepatch in "$src_dir/patches"/ps-*_{*"${rt_version%-svn}"*,all}.patch; do
-        [[ ! -e "$corepatch" ]] || { bold "$(basename "$corepatch")"; patch -uNp1 -i "$corepatch"; }
+        [[ ! -e "$corepatch" ]] || { bold "$(basename "$corepatch")"; $patch_bin -uNp1 -i "$corepatch"; }
     done
 
     for backport in "$src_dir/patches"/{backport,misc}_rt_{*"${rt_version%-svn}"*,all}_*.patch; do
-        [[ ! -e "$backport" ]] || { bold "$(basename "$backport")"; patch -uNp1 -i "$backport"; }
+        [[ ! -e "$backport" ]] || { bold "$(basename "$backport")"; $patch_bin -uNp1 -i "$backport"; }
     done
 
     ${nopyrop:-false} || for pyropatch in "$src_dir/patches"/pyroscope_{*"${rt_version%-svn}"*,all}.patch; do
-        [[ ! -e "$pyropatch" ]] || { bold "$(basename "$pyropatch")"; patch -uNp1 -i "$pyropatch"; }
+        [[ ! -e "$pyropatch" ]] || { bold "$(basename "$pyropatch")"; $patch_bin -uNp1 -i "$pyropatch"; }
     done
 
     ${nopyrop:-false} || for i in "$src_dir/patches"/*.{cc,h}; do
@@ -595,7 +605,7 @@ patch_rt() { # Patch rTorrent
     done
 
     ${nopyrop:-false} || for uipyropatch in "$src_dir/patches"/ui_pyroscope_{*"${rt_version%-svn}"*,all}.patch; do
-        [[ ! -e "$uipyropatch" ]] || { bold "$(basename "$uipyropatch")"; patch -uNp1 -i "$uipyropatch"; }
+        [[ ! -e "$uipyropatch" ]] || { bold "$(basename "$uipyropatch")"; $patch_bin -uNp1 -i "$uipyropatch"; }
     done
 
     # Version handling

@@ -1,0 +1,15 @@
+--- a/configure.ac.orig	2019-09-05 03:43:14.924784000 +0200
++++ b/configure.ac	2019-09-05 04:24:26.245592000 +0200
+@@ -4,9 +4,12 @@
+ 
+ AM_INIT_AUTOMAKE
+ AC_CONFIG_HEADERS(config.h)
++AC_CONFIG_FILES(gnulib/Makefile)
+ 
+ AC_PROG_RANLIB
+ AC_PROG_CXX
++gl_EARLY
++gl_INIT
+ AC_PROG_LIBTOOL
+ 
+ RAK_CHECK_CFLAGS
